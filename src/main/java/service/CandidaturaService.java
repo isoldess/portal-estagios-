@@ -1,87 +1,70 @@
-
 package service;
 
-import dao.CandidaturaDAO;
-import dao.UsuarioDAO;
-import dao.VagaDAO;
 import model.Candidatura;
 import model.Perfil;
 import model.SituacaoVaga;
 import model.Usuario;
 import model.Vaga;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import repository.CandidaturaRepository;
+import repository.UsuarioRepository;
+import repository.VagaRepository;
 
-import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Service
 public class CandidaturaService {
-
-    private final CandidaturaDAO candidaturaDAO;
-    private final UsuarioDAO usuarioDAO;
-    private final VagaDAO vagaDAO;
+    private final CandidaturaRepository candidaturas;
+    private final UsuarioRepository usuarios;
+    private final VagaRepository vagas;
 
     public CandidaturaService(
-            CandidaturaDAO candidaturaDAO,
-            UsuarioDAO usuarioDAO,
-            VagaDAO vagaDAO) {
-        this.candidaturaDAO = candidaturaDAO;
-        this.usuarioDAO = usuarioDAO;
-        this.vagaDAO = vagaDAO;
+            CandidaturaRepository candidaturas,
+            UsuarioRepository usuarios,
+            VagaRepository vagas) {
+        this.candidaturas = candidaturas;
+        this.usuarios = usuarios;
+        this.vagas = vagas;
     }
 
-    public Candidatura candidatar(Long estudanteId, Long vagaId)
-            throws SQLException {
-
-        Usuario estudante = usuarioDAO.buscarPorId(estudanteId)
-            .orElseThrow(() ->
-                new IllegalArgumentException("Estudante não encontrado."));
-
+    @Transactional
+    public Candidatura candidatar(Long estudanteId, Long vagaId) {
+        Usuario estudante = usuarios.findById(estudanteId)
+                .orElseThrow(() -> ApiException.notFound("Estudante não encontrado."));
         if (estudante.getPerfil() != Perfil.ESTUDANTE) {
-            throw new IllegalArgumentException(
-                "Somente estudantes podem se candidatar.");
+            throw ApiException.forbidden("Somente estudantes podem se candidatar.");
         }
-
-        Vaga vaga = vagaDAO.buscarPorId(vagaId)
-            .orElseThrow(() ->
-                new IllegalArgumentException("Vaga não encontrada."));
-
+        Vaga vaga = vagas.findById(vagaId)
+                .orElseThrow(() -> ApiException.notFound("Vaga não encontrada."));
         if (vaga.getSituacao() != SituacaoVaga.ABERTA) {
-            throw new IllegalArgumentException(
-                "Não é possível se candidatar a uma vaga encerrada.");
+            throw ApiException.conflict("Não é possível se candidatar a uma vaga encerrada.");
         }
-
-        if (candidaturaDAO.existeCandidatura(estudanteId, vagaId)) {
-            throw new IllegalArgumentException(
-                "Você já se candidatou a esta vaga.");
+        if (candidaturas.existsByEstudanteIdAndVagaId(estudanteId, vagaId)) {
+            throw ApiException.conflict("Você já se candidatou a esta vaga.");
         }
-
-        Candidatura candidatura = new Candidatura(
-            null, estudante, vaga, LocalDateTime.now());
-
-        return candidaturaDAO.salvar(candidatura);
+        return candidaturas.save(new Candidatura(null, estudante, vaga, LocalDateTime.now()));
     }
 
-    public List<Candidatura> listarDoEstudante(Long estudanteId)
-            throws SQLException {
-        return candidaturaDAO.listarPorEstudante(estudanteId);
+    @Transactional(readOnly = true)
+    public List<Candidatura> listarDoEstudante(Long estudanteId) {
+        return candidaturas.findByEstudanteIdOrderByDataInscricaoDesc(estudanteId);
     }
 
-    public List<Candidatura> listarCandidatosDaVaga(
-            Long vagaId, Long empresaId) throws SQLException {
-
-        Vaga vaga = vagaDAO.buscarPorId(vagaId)
-            .orElseThrow(() ->
-                new IllegalArgumentException("Vaga não encontrada."));
-
+    @Transactional(readOnly = true)
+    public List<Candidatura> listarDaVaga(Long vagaId, Long empresaId) {
+        Vaga vaga = vagas.findById(vagaId)
+                .orElseThrow(() -> ApiException.notFound("Vaga não encontrada."));
         if (!vaga.getEmpresaResponsavel().getId().equals(empresaId)) {
-            throw new IllegalArgumentException(
-                "Você só pode consultar candidatos das suas próprias vagas.");
+            throw ApiException.forbidden(
+                    "Você só pode consultar candidatos das suas próprias vagas.");
         }
-
-        return candidaturaDAO.listarPorVaga(vagaId);
+        return candidaturas.findByVagaIdOrderByDataInscricaoDesc(vagaId);
     }
 
-    public long contarTodas() throws SQLException {
-        return candidaturaDAO.contarTodas();
+    @Transactional(readOnly = true)
+    public long contarTodas() {
+        return candidaturas.count();
     }
 }

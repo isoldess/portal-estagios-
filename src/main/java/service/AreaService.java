@@ -1,76 +1,65 @@
-
 package service;
 
-import dao.AreaDAO;
 import model.Area;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import repository.AreaRepository;
+import repository.VagaRepository;
 
-import java.sql.SQLException;
 import java.util.List;
-import java.util.Optional;
 
+@Service
 public class AreaService {
+    private final AreaRepository areas;
+    private final VagaRepository vagas;
 
-    private final AreaDAO areaDAO;
-
-    public AreaService(AreaDAO areaDAO) {
-        this.areaDAO = areaDAO;
+    public AreaService(AreaRepository areas, VagaRepository vagas) {
+        this.areas = areas;
+        this.vagas = vagas;
     }
 
-    public Area cadastrar(String nome) throws SQLException {
-        validarNome(nome);
+    @Transactional(readOnly = true)
+    public List<Area> listarTodas() {
+        return areas.findAllByOrderByNomeAsc();
+    }
 
-        boolean duplicada = areaDAO.listarTodas().stream()
-                .anyMatch(area -> area.getNome().equalsIgnoreCase(nome.trim()));
-
-        if (duplicada) {
-            throw new IllegalArgumentException("Esta área já está cadastrada.");
+    @Transactional
+    public Area cadastrar(String nome) {
+        String normalizedName = validarNome(nome);
+        if (areas.existsByNomeIgnoreCase(normalizedName)) {
+            throw ApiException.conflict("Esta área já está cadastrada.");
         }
-
-        return areaDAO.salvar(new Area(null, nome.trim()));
+        return areas.save(new Area(null, normalizedName));
     }
 
-    public List<Area> listarTodas() throws SQLException {
-        return areaDAO.listarTodas();
-    }
-
-    public Optional<Area> buscarPorId(Long id) throws SQLException {
-        return areaDAO.buscarPorId(id);
-    }
-
-    public boolean atualizar(Long id, String novoNome) throws SQLException {
-        validarNome(novoNome);
-
-        Area area = areaDAO.buscarPorId(id)
-                .orElseThrow(() -> new IllegalArgumentException("Área não encontrada."));
-
-        boolean duplicada = areaDAO.listarTodas().stream()
-                .anyMatch(a -> !a.getId().equals(id)
-                        && a.getNome().equalsIgnoreCase(novoNome.trim()));
-
-        if (duplicada) {
-            throw new IllegalArgumentException("Já existe outra área com esse nome.");
+    @Transactional
+    public Area atualizar(Long id, String nome) {
+        String normalizedName = validarNome(nome);
+        Area area = areas.findById(id)
+                .orElseThrow(() -> ApiException.notFound("Área não encontrada."));
+        if (areas.existsByNomeIgnoreCase(normalizedName)
+                && !area.getNome().equalsIgnoreCase(normalizedName)) {
+            throw ApiException.conflict("Já existe outra área com esse nome.");
         }
-
-        area.setNome(novoNome.trim());
-        return areaDAO.atualizar(area);
+        area.setNome(normalizedName);
+        return area;
     }
 
-    public boolean excluir(Long id) throws SQLException {
-        if (id == null || id <= 0) {
-            throw new IllegalArgumentException("ID da área inválido.");
+    @Transactional
+    public void excluir(Long id) {
+        if (!areas.existsById(id)) {
+            throw ApiException.notFound("Área não encontrada.");
         }
-
-        if (areaDAO.possuiVagasVinculadas(id)) {
-            throw new IllegalArgumentException(
-                    "Não é possível excluir uma área vinculada a vagas.");
+        if (vagas.existsByAreaId(id)) {
+            throw ApiException.conflict("Não é possível excluir uma área vinculada a vagas.");
         }
-
-        return areaDAO.excluir(id);
+        areas.deleteById(id);
     }
 
-    private void validarNome(String nome) {
+    private String validarNome(String nome) {
         if (nome == null || nome.isBlank()) {
-            throw new IllegalArgumentException("O nome da área é obrigatório.");
+            throw ApiException.badRequest("O nome da área é obrigatório.");
         }
+        return nome.trim();
     }
 }

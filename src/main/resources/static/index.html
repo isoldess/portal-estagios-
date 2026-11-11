@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Portal de Estágios</title>
+    <style>
+        :root { font-family: system-ui, sans-serif; color: #172033; background: #f3f6fb; }
+        body { max-width: 920px; margin: 2rem auto; padding: 0 1rem; }
+        h1 { color: #174b91; }
+        section { background: white; border-radius: 12px; padding: 1.2rem; margin: 1rem 0; box-shadow: 0 2px 12px #17203312; }
+        form { display: grid; gap: .7rem; max-width: 520px; }
+        input, select, button { font: inherit; padding: .65rem; border: 1px solid #cbd5e1; border-radius: 6px; }
+        button { cursor: pointer; color: white; background: #174b91; border: 0; }
+        .inline { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+        .job { border-top: 1px solid #e2e8f0; padding: 1rem 0; }
+        #status { min-height: 1.5rem; color: #174b91; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<h1>Portal de Estágios</h1>
+<p>Encontre oportunidades de estágio ou acesse sua conta.</p>
+<p id="status" role="status"></p>
+
+<section>
+    <h2>Acessar</h2>
+    <form id="loginForm">
+        <input name="email" type="email" placeholder="E-mail" autocomplete="username" required>
+        <input name="senha" type="password" placeholder="Senha" autocomplete="current-password" required>
+        <div class="inline">
+            <button type="submit">Entrar</button>
+            <button type="button" id="logoutButton">Sair</button>
+        </div>
+    </form>
+</section>
+
+<section>
+    <h2>Criar conta</h2>
+    <form id="registerForm">
+        <select name="tipo" id="accountType" aria-label="Tipo de conta">
+            <option value="student">Estudante</option>
+            <option value="company">Empresa</option>
+        </select>
+        <input name="nome" placeholder="Nome" maxlength="120" required>
+        <input name="email" type="email" placeholder="E-mail" maxlength="150" required>
+        <input name="senha" type="password" placeholder="Senha (mínimo 8 caracteres)" minlength="8" maxlength="72" required>
+        <input name="curso" id="courseField" placeholder="Curso" maxlength="120" required>
+        <input name="nomeEmpresa" id="companyField" class="hidden" placeholder="Nome da empresa" maxlength="150">
+        <button type="submit">Cadastrar</button>
+    </form>
+</section>
+
+<section>
+    <div class="inline">
+        <h2>Vagas abertas</h2>
+        <button type="button" id="refreshButton">Atualizar lista</button>
+    </div>
+    <div id="jobs"></div>
+</section>
+
+<script>
+    const statusBox = document.querySelector("#status");
+    const jobsBox = document.querySelector("#jobs");
+    let currentUser = null;
+
+    async function request(url, options = {}) {
+        const method = options.method || "GET";
+        const headers = { "Content-Type": "application/json", ...options.headers };
+        if (method !== "GET" && method !== "HEAD") {
+            const csrf = await fetch("/api/auth/csrf", { credentials: "same-origin" }).then(r => r.json());
+            headers["X-XSRF-TOKEN"] = csrf.token;
+        }
+        const response = await fetch(url, { ...options, method, headers, credentials: "same-origin" });
+        if (response.status === 204) return null;
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.message || "Não foi possível concluir a operação.");
+        return body;
+    }
+
+    async function loadJobs() {
+        try {
+            const jobs = await request("/api/vagas");
+            jobsBox.replaceChildren();
+            for (const job of jobs) {
+                const article = document.createElement("article");
+                article.className = "job";
+                const title = document.createElement("h3");
+                title.textContent = job.titulo;
+                const details = document.createElement("p");
+                details.textContent = `${job.nomeEmpresa} · ${job.area.nome} · ${job.localizacao} · ${job.modalidade}`;
+                const description = document.createElement("p");
+                description.textContent = job.descricao;
+                article.append(title, details, description);
+                if (currentUser?.perfil === "ESTUDANTE") {
+                    const button = document.createElement("button");
+                    button.textContent = "Candidatar-se";
+                    button.addEventListener("click", async () => {
+                        try {
+                            await request(`/api/estudante/vagas/${job.id}/candidaturas`, { method: "POST" });
+                            statusBox.textContent = "Candidatura registrada.";
+                        } catch (error) {
+                            statusBox.textContent = error.message;
+                        }
+                    });
+                    article.append(button);
+                }
+                jobsBox.append(article);
+            }
+            if (jobs.length === 0) jobsBox.textContent = "Nenhuma vaga aberta no momento.";
+        } catch (error) {
+            statusBox.textContent = error.message;
+        }
+    }
+
+    document.querySelector("#loginForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+            currentUser = await request("/api/auth/login", {
+                method: "POST",
+                body: JSON.stringify({ email: form.get("email"), senha: form.get("senha") })
+            });
+            statusBox.textContent = `Olá, ${currentUser.nome}.`;
+            await loadJobs();
+        } catch (error) {
+            statusBox.textContent = error.message;
+        }
+    });
+
+    document.querySelector("#registerForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        const company = form.get("tipo") === "company";
+        const body = {
+            nome: form.get("nome"),
+            email: form.get("email"),
+            senha: form.get("senha"),
+            [company ? "nomeEmpresa" : "curso"]: form.get(company ? "nomeEmpresa" : "curso")
+        };
+        try {
+            const user = await request(`/api/auth/register/${company ? "company" : "student"}`, {
+                method: "POST",
+                body: JSON.stringify(body)
+            });
+            statusBox.textContent = `Conta criada para ${user.nome}. Faça login para continuar.`;
+            event.currentTarget.reset();
+        } catch (error) {
+            statusBox.textContent = error.message;
+        }
+    });
+
+    document.querySelector("#accountType").addEventListener("change", event => {
+        const company = event.target.value === "company";
+        document.querySelector("#courseField").classList.toggle("hidden", company);
+        document.querySelector("#courseField").required = !company;
+        document.querySelector("#companyField").classList.toggle("hidden", !company);
+        document.querySelector("#companyField").required = company;
+    });
+
+    document.querySelector("#logoutButton").addEventListener("click", async () => {
+        try {
+            await request("/api/auth/logout", { method: "POST" });
+            currentUser = null;
+            statusBox.textContent = "Sessão encerrada.";
+            await loadJobs();
+        } catch (error) {
+            statusBox.textContent = error.message;
+        }
+    });
+
+    document.querySelector("#refreshButton").addEventListener("click", loadJobs);
+    loadJobs();
+</script>
+</body>
+</html>

@@ -1,90 +1,75 @@
-
 package service;
 
-import dao.UsuarioDAO;
 import model.Perfil;
 import model.Usuario;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import repository.UsuarioRepository;
 
-import java.sql.SQLException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Optional;
 
+@Service
 public class UsuarioService {
+    private final UsuarioRepository usuarios;
+    private final PasswordEncoder passwordEncoder;
 
-    private final UsuarioDAO usuarioDAO;
-
-    public UsuarioService(UsuarioDAO usuarioDAO) {
-        this.usuarioDAO = usuarioDAO;
+    public UsuarioService(UsuarioRepository usuarios, PasswordEncoder passwordEncoder) {
+        this.usuarios = usuarios;
+        this.passwordEncoder = passwordEncoder;
     }
 
-    public Usuario cadastrar(Usuario usuario) throws SQLException {
-        if (usuario == null) {
-            throw new IllegalArgumentException("Usuário obrigatório.");
+    @Transactional
+    public Usuario cadastrarEstudante(String nome, String email, String senha, String curso) {
+        validarConta(nome, email, senha);
+        if (curso == null || curso.isBlank()) {
+            throw ApiException.badRequest("Informe o curso do estudante.");
         }
-
-        if (usuario.getNome() == null || usuario.getNome().isBlank()) {
-            throw new IllegalArgumentException("Informe o nome.");
-        }
-
-        if (usuario.getEmail() == null || usuario.getEmail().isBlank()) {
-            throw new IllegalArgumentException("Informe o e-mail.");
-        }
-
-        if (usuario.getPerfil() == null) {
-            throw new IllegalArgumentException("Informe o perfil.");
-        }
-
-        if (usuarioDAO.buscarPorEmail(usuario.getEmail()).isPresent()) {
-            throw new IllegalArgumentException("Este e-mail já está cadastrado.");
-        }
-
-        if (usuario.getPerfil() == Perfil.ESTUDANTE
-                && (usuario.getCurso() == null || usuario.getCurso().isBlank())) {
-            throw new IllegalArgumentException("Informe o curso do estudante.");
-        }
-
-        if (usuario.getPerfil() == Perfil.EMPRESA
-                && (usuario.getNomeEmpresa() == null
-                || usuario.getNomeEmpresa().isBlank())) {
-            throw new IllegalArgumentException("Informe o nome da empresa.");
-        }
-
-        return usuarioDAO.salvar(usuario);
+        return salvarConta(nome, email, senha, Perfil.ESTUDANTE, curso.trim(), null);
     }
 
-    public Optional<Usuario> buscarPorId(Long id) throws SQLException {
-        return usuarioDAO.buscarPorId(id);
+    @Transactional
+    public Usuario cadastrarEmpresa(
+            String nome, String email, String senha, String nomeEmpresa) {
+        validarConta(nome, email, senha);
+        if (nomeEmpresa == null || nomeEmpresa.isBlank()) {
+            throw ApiException.badRequest("Informe o nome da empresa.");
+        }
+        return salvarConta(nome, email, senha, Perfil.EMPRESA, null, nomeEmpresa.trim());
     }
 
-    public List<Usuario> listarTodos() throws SQLException {
-        return usuarioDAO.listarTodos();
+    @Transactional(readOnly = true)
+    public List<Usuario> listarTodos() {
+        return usuarios.findAllByOrderByNomeAsc();
     }
 
-    public boolean atualizar(Usuario usuario) throws SQLException {
-        if (usuario == null || usuario.getId() == null) {
-            throw new IllegalArgumentException("Usuário e ID são obrigatórios.");
+    @Transactional
+    public void excluir(Long id) {
+        if (!usuarios.existsById(id)) {
+            throw ApiException.notFound("Usuário não encontrado.");
         }
-
-        if (usuario.getNome() == null || usuario.getNome().isBlank()
-                || usuario.getEmail() == null || usuario.getEmail().isBlank()) {
-            throw new IllegalArgumentException("Nome e e-mail são obrigatórios.");
-        }
-
-        Optional<Usuario> existente = usuarioDAO.buscarPorEmail(usuario.getEmail());
-
-        if (existente.isPresent()
-                && !existente.get().getId().equals(usuario.getId())) {
-            throw new IllegalArgumentException("Este e-mail já pertence a outro usuário.");
-        }
-
-        return usuarioDAO.atualizar(usuario);
+        usuarios.deleteById(id);
     }
 
-    public boolean excluir(Long id) throws SQLException {
-        if (id == null || id <= 0) {
-            throw new IllegalArgumentException("ID inválido.");
+    private Usuario salvarConta(
+            String nome, String email, String senha, Perfil perfil,
+            String curso, String nomeEmpresa) {
+        String normalizedEmail = email.trim().toLowerCase();
+        if (usuarios.existsByEmailIgnoreCase(normalizedEmail)) {
+            throw ApiException.conflict("Este e-mail já está cadastrado.");
         }
+        Usuario usuario = new Usuario(null, nome.trim(), normalizedEmail,
+                perfil, curso, nomeEmpresa);
+        usuario.setPasswordHash(passwordEncoder.encode(senha));
+        return usuarios.save(usuario);
+    }
 
-        return usuarioDAO.excluir(id);
+    private void validarConta(String nome, String email, String senha) {
+        if (nome == null || nome.isBlank() || email == null || email.isBlank()
+                || senha == null || senha.length() < 8
+                || senha.getBytes(StandardCharsets.UTF_8).length > 72) {
+            throw ApiException.badRequest("Nome, e-mail e senha válida são obrigatórios.");
+        }
     }
 }
